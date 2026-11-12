@@ -17,6 +17,7 @@ import subprocess
 import tarfile
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -30,12 +31,20 @@ REPO = Path(__file__).resolve().parents[2]
 ID = re.compile(r"[a-f0-9]{32}\Z")
 ACTION = re.compile(r"action-[a-f0-9]{16}\Z")
 MAX_RESULT = 128 * 1024 * 1024
+# ML-Expd archives everything below OUTPUT_DIR under "outputs/".
+RESULT_MEMBER = "outputs/comfyresearch-result.json"
+# A background submission waits this long for a short refresh to release the job.
+SUBMIT_LOCK_WAIT = 10.0
 
 
 class JobError(Exception):
     def __init__(self, message: str, status: int = 409):
         super().__init__(message)
         self.status = status
+
+
+class JobBusy(JobError):
+    """Another request holds this job's lock."""
 
 
 def root() -> Path:
@@ -53,23 +62,28 @@ def directory(job_id: str) -> Path:
 
 
 @contextlib.contextmanager
-def locked(job_id: str) -> Iterator[Path]:
+def locked(job_id: str, wait: float = 0.0) -> Iterator[Path]:
     path = directory(job_id)
+    deadline = time.monotonic() + wait
     with open(path.with_suffix(".lock"), "a+b") as handle:
-        try:
-            if os.name == "nt":
-                import msvcrt
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
 
-                handle.write(b"0")
-                handle.flush()
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
+                    handle.write(b"0")
+                    handle.flush()
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
 
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            raise JobError("This job is busy; query it again") from exc
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise JobBusy("This job is busy; query it again") from exc
+                time.sleep(0.2)
         try:
             yield path
         finally:
@@ -429,7 +443,9 @@ def exported_source(path: Path) -> Iterator[Path]:
 
 def submit(job_id: str) -> None:
     try:
-        with locked(job_id) as path:
+        # Wait out a concurrent refresh, which holds the lock briefly; a job that
+        # stays busy belongs to another submission worker.
+        with locked(job_id, wait=SUBMIT_LOCK_WAIT) as path:
             job = load(path)
             if job.get("submission_id") or job["phase"] in {
                 "STAGING",
@@ -486,7 +502,7 @@ def submit(job_id: str) -> None:
                     error="Could not read the frozen source or submission response; retain this task's identity",
                 )
             save(path, job)
-    except JobError:
+    except JobBusy:
         # Another worker owns the same job. Never submit a different identity.
         return
 
@@ -498,7 +514,13 @@ def start(job_id: str) -> None:
 
 
 def refresh(job_id: str) -> dict:
-    with locked(job_id) as path:
+    with contextlib.ExitStack() as stack:
+        try:
+            path = stack.enter_context(locked(job_id))
+        except JobBusy:
+            # A submission can hold the job for up to an hour while its image
+            # builds. Report the saved phase rather than an error.
+            return view(load(directory(job_id)))
         job = load(path)
         if not job.get("submission_id"):
             return view(job)
@@ -565,7 +587,7 @@ def results(job_id: str) -> dict:
         job = load(path)
         if not job.get("submission_id"):
             raise JobError("No submitted job to download")
-        archive = path / "results.tar.gz"
+        archive = path / "results.tar"
         cli(
             job["client"],
             [
@@ -583,7 +605,7 @@ def results(job_id: str) -> dict:
             members = [
                 m
                 for m in tar
-                if m.name.removeprefix("./") == "comfyresearch-result.json"
+                if m.name.removeprefix("./") == RESULT_MEMBER
             ]
             if (
                 len(members) != 1

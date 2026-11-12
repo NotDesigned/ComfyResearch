@@ -341,6 +341,7 @@ def test_refresh_keeps_last_evidence_on_provider_failure(environment, monkeypatc
 
 def test_job_lock_prevents_duplicate_worker(environment, monkeypatch):
     create()
+    monkeypatch.setattr(service, "SUBMIT_LOCK_WAIT", 0.3)
     monkeypatch.setattr(
         service, "cli", lambda *a, **kw: pytest.fail("concurrent worker submitted")
     )
@@ -349,10 +350,64 @@ def test_job_lock_prevents_duplicate_worker(environment, monkeypatch):
     assert service.load(service.directory(JOB))["phase"] == "PREPARED"
 
 
-def write_result(path, envelope, *, symlink=False):
+def test_submission_waits_for_a_brief_refresh_instead_of_stalling(
+    environment, monkeypatch
+):
+    create()
+    held, release = threading.Event(), threading.Event()
+
+    def refresh_holding_lock():
+        with service.locked(JOB):
+            held.set()
+            release.wait(5)
+
+    holder = threading.Thread(target=refresh_holding_lock)
+    holder.start()
+    held.wait(5)
+    monkeypatch.setattr(service, "exported_source", lambda path: _same(path / "source"))
+    monkeypatch.setattr(
+        service,
+        "cli",
+        lambda cfg, args, **kw: {
+            "project": "study",
+            "run_id": f"cr-{JOB}",
+            "submission_id": SID,
+        },
+    )
+    threading.Timer(0.5, release.set).start()
+    service.submit(JOB)
+    holder.join(5)
+    job = service.load(service.directory(JOB))
+    assert job["phase"] == "SUBMITTED" and job["submission_id"] == SID
+
+
+def _same(path):
+    import contextlib
+
+    return contextlib.nullcontext(path)
+
+
+def test_refresh_during_a_long_submission_reports_the_saved_phase(
+    environment, monkeypatch
+):
+    create()
+    path = service.directory(JOB)
+    job = service.load(path)
+    job["phase"] = "SUBMITTING"
+    service.save(path, job)
+    monkeypatch.setattr(
+        service, "cli", lambda *a, **kw: pytest.fail("refresh queried while busy")
+    )
+    with service.locked(JOB):
+        result = service.refresh(JOB)
+    assert result["phase"] == "SUBMITTING" and result["error"] is None
+
+
+def write_result(path, envelope, *, symlink=False, name=service.RESULT_MEMBER):
+    # ML-Expd archives OUTPUT_DIR as "outputs/...", as `ml-exp run download` writes it.
     raw = json.dumps(envelope).encode()
-    with tarfile.open(path / "results.tar.gz", "w:gz") as tar:
-        member = tarfile.TarInfo("comfyresearch-result.json")
+    with tarfile.open(path / "results.tar", "w") as tar:
+        member = tarfile.TarInfo(name)
         member.size = len(raw)
         if symlink:
             member.type = tarfile.SYMTYPE
@@ -379,6 +434,10 @@ def test_results_require_verified_archive_and_exact_request(environment, monkeyp
     with pytest.raises(service.JobError, match="different experiment"):
         service.results(JOB)
     write_result(path, envelope, symlink=True)
+    with pytest.raises(service.JobError, match="bounded"):
+        service.results(JOB)
+    # A result outside OUTPUT_DIR is not the job's output.
+    write_result(path, envelope, name="comfyresearch-result.json")
     with pytest.raises(service.JobError, match="bounded"):
         service.results(JOB)
 
