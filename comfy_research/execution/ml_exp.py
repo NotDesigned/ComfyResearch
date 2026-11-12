@@ -394,6 +394,39 @@ def verify_source(path: Path) -> None:
         raise JobError("Frozen source changed; this job cannot be submitted")
 
 
+@contextlib.contextmanager
+def exported_source(path: Path) -> Iterator[Path]:
+    """Export the sealed input outside ancestor Git ignore rules.
+
+    Native ml-exp deliberately respects an ancestor repository's .gitignore.
+    Our private state normally lives in the ignored .comfyresearch directory,
+    so it cannot itself be used as the native upload root. Keep the basename
+    'source': native submission identity binds that name and content, not the
+    absolute temporary path. An existing failed task can therefore continue.
+    """
+    with tempfile.TemporaryDirectory(prefix="comfyresearch-ml-exp-") as temporary:
+        source = Path(temporary).resolve() / "source"
+        if any(
+            (parent / ".git/HEAD").exists() or (parent / ".git").is_file()
+            for parent in source.parents
+        ):
+            raise JobError(
+                "The temporary directory is inside a Git repository. Set TMPDIR outside repositories before starting ComfyResearch."
+            )
+        shutil.copytree(path / "source", source)
+        expected = json.loads((path / "source-hashes.json").read_text(encoding="utf-8"))
+        actual = {
+            str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(source.rglob("*"))
+            if p.is_file()
+        }
+        if actual != expected:
+            raise JobError(
+                "Frozen source changed while exporting; nothing was submitted"
+            )
+        yield source
+
+
 def submit(job_id: str) -> None:
     try:
         with locked(job_id) as path:
@@ -431,7 +464,9 @@ def submit(job_id: str) -> None:
                 for name, asset in sorted(opt.get("datasets", {}).items()):
                     args += ["--data", f"{name}={asset}"]
                 args += ["--", "python3", "-u", "run_graph.py"]
-                result = cli(job["client"], args, timeout=3600)
+                with exported_source(path) as source:
+                    args[1] = str(source)
+                    result = cli(job["client"], args, timeout=3600)
                 if (
                     result.get("project") != job["project"]
                     or result.get("run_id") != job["run_id"]

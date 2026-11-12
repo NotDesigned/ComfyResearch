@@ -7,6 +7,9 @@ import os
 import subprocess
 import sys
 import tarfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -27,6 +30,7 @@ OPTIONS = {
     "walltime_seconds": 1800,
     "datasets": {},
 }
+REAL_CLI = service.cli
 
 
 @pytest.fixture
@@ -132,7 +136,9 @@ def test_lost_submit_reply_continues_same_frozen_identity(environment, monkeypat
     service.submit(JOB)
     assert service.load(service.directory(JOB))["phase"] == "NEEDS_ATTENTION"
     service.submit(JOB)
-    assert calls[0] == calls[1]
+    assert calls[0][0] == calls[1][0]
+    assert calls[0][2:] == calls[1][2:]
+    assert Path(calls[0][1]).name == Path(calls[1][1]).name == "source"
     assert "--detach" in calls[0]
     assert service.load(service.directory(JOB))["submission_id"] == SID
     service.submit(JOB)
@@ -147,6 +153,125 @@ def test_source_mutation_refuses_continue_before_any_command(environment, monkey
     )
     service.submit(JOB)
     assert service.load(service.directory(JOB))["phase"] == "NEEDS_ATTENTION"
+
+
+def test_export_keeps_frozen_bytes_and_removes_temporary_source(environment):
+    create()
+    path = service.directory(JOB)
+    manifest = (path / "source-hashes.json").read_bytes()
+    with service.exported_source(path) as exported:
+        assert exported.name == "source"
+        assert (exported / "request.json").read_bytes() == (
+            path / "source/request.json"
+        ).read_bytes()
+        assert exported.is_dir()
+    assert not exported.exists()
+    assert (path / "source-hashes.json").read_bytes() == manifest
+    service.verify_source(path)
+
+
+def test_native_client_packs_ignored_state_and_keeps_preparation_identity(
+    environment, monkeypatch
+):
+    binary = os.environ.get("COMFYRESEARCH_TEST_ML_EXP_BINARY")
+    if not binary:
+        pytest.skip(
+            "Set COMFYRESEARCH_TEST_ML_EXP_BINARY to exercise the released native packer"
+        )
+    repo = environment / "checkout"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".gitignore").write_text(".comfyresearch/\n")
+    monkeypatch.setenv(
+        "COMFYRESEARCH_ML_EXP_STATE_DIR", str(repo / ".comfyresearch/ml-exp")
+    )
+    create()
+    path = service.directory(JOB)
+    job = service.load(path)
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(("GET", self.path))
+            body = (
+                {"capabilities": []}
+                if self.path == "/api/health"
+                else {
+                    "code": "PACKING_PROBE_COMPLETE",
+                    "detail": "stop before source upload",
+                }
+            )
+            raw = json.dumps(body).encode()
+            self.send_response(200 if self.path == "/api/health" else 400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_POST(self):
+            requests.append(("POST", self.path))
+            self.send_response(400)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        token = environment / "token"
+        token.chmod(0o600)
+        config = Path(job["client"]["config"])
+        config.write_text(
+            json.dumps(
+                {
+                    "url": f"http://127.0.0.1:{server.server_port}",
+                    "token_file": str(token),
+                }
+            )
+        )
+        job["client"]["binary"] = binary
+        service.save(path, job)
+        command = [
+            binary,
+            "--config",
+            str(config),
+            "--json",
+            "submit",
+            str(path / "source"),
+            "--project",
+            "study",
+            "--executor",
+            "cpu",
+            "--run",
+            job["run_id"],
+            "--gpus",
+            "0",
+            "--time",
+            "1800s",
+            "--yes",
+            "--detach",
+            "--",
+            "python3",
+            "run_graph.py",
+        ]
+        original = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        assert "git lists no files" in original.stderr
+        assert not any("experiment-preparations" in route for _, route in requests)
+        monkeypatch.setattr(service, "cli", REAL_CLI)
+        service.submit(JOB)
+        service.submit(JOB)
+        probes = [route for _, route in requests if "experiment-preparations" in route]
+        assert len(probes) == 2 and probes[0] == probes[1]
+        assert not any(method == "POST" for method, _ in requests)
+        assert service.load(path)["run_id"] == job["run_id"]
+        assert "git lists no files" not in (path / "cli-error.log").read_text()
+        service.verify_source(path)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_incomplete_source_after_crash_never_submits(environment, monkeypatch):

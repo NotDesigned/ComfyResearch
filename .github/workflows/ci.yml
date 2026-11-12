@@ -56,6 +56,12 @@ jobs:
           pip install pytest ruff==0.15.15
       - name: Reject undefined Python names
         run: python -m ruff check comfy_research scripts tests --select F821,F822,F823
+      - name: Install pinned native client for source-pack regression
+        run: |
+          curl --fail --location --retry 3 https://github.com/NotDesigned/ml-experiment-control/releases/download/native-v0.13.4/ml-exp-x86_64-unknown-linux-gnu --output "$RUNNER_TEMP/ml-exp-test"
+          printf '%s  %s\n' '9ef15ed50757ee8ccb59848d26f5b8976d793dc0eb4d97cc02ad922f500d40ca' "$RUNNER_TEMP/ml-exp-test" | sha256sum --check
+          chmod 700 "$RUNNER_TEMP/ml-exp-test"
+          echo "COMFYRESEARCH_TEST_ML_EXP_BINARY=$RUNNER_TEMP/ml-exp-test" >> "$GITHUB_ENV"
       - name: ML-Exp recovery contracts and packaged CPU graph
         run: python -m pytest -q comfy_research/tests/test_ml_exp_execution.py
       - name: Run backend test suites

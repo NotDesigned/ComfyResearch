@@ -35,6 +35,12 @@ ID immediately after staging; image preparation proceeds in the background.
 Closing the page stops observing, not the remote job. Reopening its workspace
 recovers the task. **New experiment** retains the old binding under **Previous
 tasks**. Small/Medium graph exports remove those machine-local bindings.
+Each native submission reads a hash-checked temporary copy outside the Git
+checkout, so the repository's `.comfyresearch/` ignore rule cannot hide its
+source. The temporary copy is removed afterwards; the original frozen input
+and task identity remain available for continuation, including existing tasks
+that failed with `git lists no files`. Keep the system temporary directory
+outside Git repositories.
 
 **Continue submission** advances the same frozen submission after a lost reply or
 server restart. It never chooses a new Run or changes its source. Read-only GETs
