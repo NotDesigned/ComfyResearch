@@ -49,7 +49,21 @@ export function mlExpRequest(nodes: Node[], edges: Edge[], trainerId: string) {
 export async function graphSignature(request: unknown): Promise<string> {
   // UI edit detection only. The server independently binds results with SHA256.
   // Keep it usable on an HTTP LAN workbench, where crypto.subtle is unavailable.
-  const bytes = new TextEncoder().encode(JSON.stringify(request));
+  const stable = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(stable);
+    if (value && typeof value === "object") return Object.fromEntries(
+      Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stable(item)]),
+    );
+    return value;
+  };
+  let experiment = request;
+  if (request && typeof request === "object" && "nodes" in request && Array.isArray(request.nodes)) {
+    experiment = { ...request, nodes: request.nodes.map((node: Record<string, unknown>) => {
+      const { position: _position, style: _style, hidden: _hidden, ...definition } = node;
+      return definition;
+    }) };
+  }
+  const bytes = new TextEncoder().encode(JSON.stringify(stable(experiment)));
   let hash = 0xcbf29ce484222325n;
   for (const byte of bytes) hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
   return hash.toString(16).padStart(16, "0");

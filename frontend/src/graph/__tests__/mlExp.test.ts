@@ -37,6 +37,14 @@ describe("ML-Exp execution contract", () => {
     expect(mlExpRequestId()).toMatch(/^[a-f0-9]{32}$/);
   });
 
+  it("allows canvas movement and JSON property reordering while a task runs", async () => {
+    const request = mlExpRequest(nodes, edges, "trainer");
+    const signature = await graphSignature(request);
+    request.nodes[0].position = { x: 200, y: 300 };
+    request.nodes[0].data = Object.fromEntries(Object.entries(request.nodes[0].data).reverse());
+    expect(await graphSignature(request)).toBe(signature);
+  });
+
   it("uses explicit POST for effects and preserves recoverable HTTP status", async () => {
     const fetcher = vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({ detail: "not found" }) });
     vi.stubGlobal("fetch", fetcher);
