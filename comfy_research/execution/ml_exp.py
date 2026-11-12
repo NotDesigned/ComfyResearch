@@ -203,19 +203,29 @@ def cli(cfg: dict, args: list[str], *, timeout: int = 60) -> dict:
             ) from exc
         if result.returncode:
             retain_cli_error(cfg, err)
-            raise JobError(
-                f"ML-Exp {args[0]} failed (exit {result.returncode}); check the server connection and job configuration",
-                502,
-            )
         out.seek(0)
         raw = out.read(8 * 1024 * 1024 + 1)
+    failure = JobError(
+        f"ML-Exp {args[0]} failed (exit {result.returncode}); check the server connection and job configuration",
+        502,
+    )
     try:
         value = json.loads(raw)
         if len(raw) > 8 * 1024 * 1024 or not isinstance(value, dict):
             raise ValueError()
-        return value
     except ValueError as exc:
+        if result.returncode:
+            raise failure from exc
         raise JobError("ML-Exp returned an invalid JSON response", 502) from exc
+    if result.returncode and not (
+        args[0] == "submit"
+        and isinstance(value.get("submission_id"), str)
+        and ACTION.fullmatch(value["submission_id"])
+    ):
+        raise failure
+    # submit may print a complete, owned identity and exit nonzero because the
+    # job already ended unsuccessfully. Keep it observable; never invent a new job.
+    return value
 
 
 def connection() -> dict:

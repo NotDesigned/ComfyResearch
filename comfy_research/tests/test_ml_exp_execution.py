@@ -346,6 +346,24 @@ def test_cli_uses_argument_vector_and_does_not_leak_stderr(tmp_path):
     assert (tmp_path / "error.log").read_text() == "secret-token"
 
 
+def test_cli_retains_known_submission_when_job_already_failed(tmp_path):
+    script = tmp_path / "fake-ml-exp"
+    response = {
+        "project": "study",
+        "run_id": f"cr-{JOB}",
+        "submission_id": SID,
+        "job_state": "FAILED",
+    }
+    script.write_text("#!/bin/sh\nprintf '%s' '" + json.dumps(response) + "'\nexit 1\n")
+    script.chmod(0o700)
+    assert (
+        service.cli({"binary": str(script), "config": ""}, ["submit"])["submission_id"]
+        == SID
+    )
+    with pytest.raises(service.JobError):
+        service.cli({"binary": str(script), "config": ""}, ["check"])
+
+
 def test_batch_runner_executes_real_cpu_graph_and_preserves_complete(environment):
     pytest.importorskip("torch")
     create()
