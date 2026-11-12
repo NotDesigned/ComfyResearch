@@ -25,6 +25,9 @@ In an ordinary Trainer, choose **execution → ML-Exp**, enter an approved Proje
 executor, CPU/GPU count, memory and time limit, then **Submit to ML-Exp**. Zero
 GPUs selects the CPU image; a positive GPU count selects the pinned CUDA image.
 The graph's local/AutoDL device selection does not choose the remote device.
+**Check connection** lists exact executor IDs. Selecting a fixed shape fills its
+whole allocation; the API refuses mismatched resource counts rather than
+silently expanding them. Executor-family prefixes are not accepted here.
 
 The server freezes the execution graph, code, dependencies, user definitions and
 initial checkpoint files before starting submission. It returns a durable task

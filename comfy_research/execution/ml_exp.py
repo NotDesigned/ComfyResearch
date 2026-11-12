@@ -229,6 +229,30 @@ def connection() -> dict:
     }
 
 
+def validate_executor(cfg: dict, options: dict) -> None:
+    catalog = cli(cfg, ["backend"])
+    row = next(
+        (
+            item
+            for item in catalog.get("executors", [])
+            if item.get("executor_id") == options["executor"]
+        ),
+        None,
+    )
+    if not row or row.get("enabled") is not True or row.get("run_creation") is not True:
+        raise JobError(
+            "Choose an exact, enabled executor ID from Check connection", 422
+        )
+    limits = row.get("limits", {})
+    if limits.get("fixed_resources") is True:
+        expected = {key: limits.get(key) for key in ("gpus", "cpus", "memory_gb")}
+        if any(options[key] != value for key, value in expected.items()):
+            raise JobError(
+                f"This executor allocates its whole fixed shape: {expected['gpus']} GPUs, {expected['cpus']} CPUs, {expected['memory_gb']} GB. Select those exact resources before submitting.",
+                422,
+            )
+
+
 def stage_request(path: Path, request: dict, options: dict) -> str:
     """Reuse the batch packer; source and environment remain separate identities."""
     import importlib.util
@@ -319,6 +343,7 @@ def create(job_id: str, request: dict, options: dict) -> dict:
                 )
             return view(old)
         cfg = settings()
+        validate_executor(cfg, options)
         path.mkdir(mode=0o700, exist_ok=True)
         cfg = freeze_connection(path, cfg)
         job = {

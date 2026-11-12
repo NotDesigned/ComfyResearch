@@ -56,6 +56,8 @@ jobs:
           pip install pytest ruff==0.15.15
       - name: Reject undefined Python names
         run: python -m ruff check comfy_research scripts tests --select F821,F822,F823
+      - name: ML-Exp recovery contracts and packaged CPU graph
+        run: python -m pytest -q comfy_research/tests/test_ml_exp_execution.py
       - name: Run backend test suites
         # `python -m pytest` (not bare `pytest`) so the repo root is on sys.path
         # and `comfy_research` is importable — the project ships no packaging.

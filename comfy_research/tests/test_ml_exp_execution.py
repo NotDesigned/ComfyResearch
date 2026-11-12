@@ -43,6 +43,20 @@ def environment(tmp_path, monkeypatch):
         service, "settings", lambda: {"binary": "/fake/ml-exp", "config": str(config)}
     )
     monkeypatch.setattr(service, "start", lambda job_id: None)
+    monkeypatch.setattr(
+        service,
+        "cli",
+        lambda *args, **kwargs: {
+            "executors": [
+                {
+                    "executor_id": "cpu",
+                    "enabled": True,
+                    "run_creation": True,
+                    "limits": {},
+                }
+            ]
+        },
+    )
     return tmp_path
 
 
@@ -75,6 +89,33 @@ def test_pack_freezes_minimal_graph_and_independent_connection(environment):
     assert all(node["id"] != "unrelated" for node in staged["nodes"])
     assert (path / "source/Dockerfile").read_text().startswith("# CPU")
     assert not (path / "source/frontend").exists()
+
+
+def test_fixed_shapes_require_explicit_matching_resource_selection(
+    environment, monkeypatch
+):
+    monkeypatch.setattr(
+        service,
+        "cli",
+        lambda *args, **kwargs: {
+            "executors": [
+                {
+                    "executor_id": "cpu",
+                    "enabled": True,
+                    "run_creation": True,
+                    "limits": {
+                        "fixed_resources": True,
+                        "gpus": 8,
+                        "cpus": 64,
+                        "memory_gb": 512,
+                    },
+                }
+            ]
+        },
+    )
+    with pytest.raises(service.JobError, match="whole fixed shape"):
+        create()
+    assert not service.directory(JOB).exists()
 
 
 def test_lost_submit_reply_continues_same_frozen_identity(environment, monkeypatch):

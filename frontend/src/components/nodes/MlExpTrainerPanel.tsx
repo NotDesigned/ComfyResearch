@@ -16,6 +16,7 @@ export function MlExpTrainerPanel({ id, data, update }: {
   const [error, setError] = useState<string | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
   const [connection, setConnection] = useState<string | null>(null);
+  const [executors, setExecutors] = useState<{ executor_id: string; limits?: { fixed_resources?: boolean; gpus?: number; cpus?: number; memory_gb?: number } }[]>([]);
   const [busy, setBusy] = useState(false);
   const working = useRef(false);
   const [datasetText, setDatasetText] = useState(JSON.stringify(settings.datasets));
@@ -94,9 +95,14 @@ export function MlExpTrainerPanel({ id, data, update }: {
     <p className="cr-trainer-remote__hint">Run independently of this page. GPU count selects CPU or CUDA. Credentials use the server's ml-exp connection.</p>
     {(["project", "executor"] as const).map((key) => <label className="cr-comfy-widget" key={key}>
       <span className="cr-comfy-widget__label">{key}</span>
-      <input className="cr-input cr-comfy-widget__control nodrag nopan" aria-label={`ML-Exp ${key}`}
-        value={settings[key]} disabled={Boolean(jobId)} onChange={(event) => patchSettings({ [key]: event.target.value })} />
+      <input className="cr-input cr-comfy-widget__control nodrag nopan" aria-label={`ML-Exp ${key}`} list={key === "executor" ? `ml-exp-executors-${id}` : undefined}
+        value={settings[key]} disabled={Boolean(jobId)} onChange={(event) => {
+          const value = event.target.value;
+          const row = key === "executor" ? executors.find((item) => item.executor_id === value) : undefined;
+          patchSettings({ [key]: value, ...(row?.limits?.fixed_resources ? { gpus: row.limits.gpus, cpus: row.limits.cpus, memory_gb: row.limits.memory_gb } : {}) });
+        }} />
     </label>)}
+    <datalist id={`ml-exp-executors-${id}`}>{executors.map((row) => <option key={row.executor_id} value={row.executor_id} />)}</datalist>
     {numeric("gpus", "GPUs", 0)}
     {numeric("cpus", "CPUs", 1)}
     {numeric("memory_gb", "memory (GB)", 1)}
@@ -115,7 +121,8 @@ export function MlExpTrainerPanel({ id, data, update }: {
     </details>
     <div className="cr-trainer-train-btn-row">
       <button type="button" className="cr-trainer-train-btn" disabled={busy} onClick={() => void action(async () => {
-        const response = await mlExpApi<{ connected: boolean; server_version?: string }>("/connection");
+        const response = await mlExpApi<{ connected: boolean; server_version?: string; executors?: typeof executors }>("/connection");
+        setExecutors(response.executors ?? []);
         setConnection(`Connected${response.server_version ? ` (${response.server_version})` : ""}`);
       })}>Check connection</button>
       {!jobId ? <button type="button" className="cr-trainer-train-btn" disabled={busy || !settings.project || !settings.executor} onClick={() => void submit()}>Submit to ML-Exp</button> : null}
