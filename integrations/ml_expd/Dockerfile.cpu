@@ -1,0 +1,9 @@
+# CPU environment for ComfyResearch graphs on ML-Expd. Only this file and
+# requirements.txt define the environment, so changing a graph or the code
+# reuses the built image.
+FROM docker.io/library/python@sha256:623674a14ef93d052bb9b0de4dbf5f28eb578a35263838941cc8aa43213c1487
+ENV PIP_NO_CACHE_DIR=1 PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+COPY requirements.txt /tmp/requirements.txt
+# The CPU wheel first, so `torch>=2.2.0` in requirements.txt does not pull CUDA.
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 \
+ && pip install -r /tmp/requirements.txt

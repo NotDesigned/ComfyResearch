@@ -208,6 +208,7 @@ def post_train_coordinate_descent_control(body: TrainCoordinateDescentControlReq
 @router.post("/train/sweep")
 def post_train_sweep(body: TrainSweepRequest) -> StreamingResponse:
     """Stream NDJSON: sweep_started, sweep_progress, sweep_row, sweep_complete | sweep_aborted."""
+    _require_stream_backend(body)
     try:
         validate_sweep_request(body)
     except ValueError as e:
@@ -227,6 +228,7 @@ def post_train_sweep(body: TrainSweepRequest) -> StreamingResponse:
 @router.post("/train/coordinate-descent")
 def post_train_coordinate_descent(body: TrainCoordinateDescentRequest) -> StreamingResponse:
     """Stream NDJSON for coordinate-descent curve matching."""
+    _require_stream_backend(body)
     try:
         validate_coordinate_descent_request(body)
     except ValueError as e:
@@ -356,9 +358,16 @@ def _remote_train_not_ready_detail() -> str:
     )
 
 
+def _require_stream_backend(body: TrainRequest | TrainSweepRequest | TrainCoordinateDescentRequest) -> None:
+    target = next((node for node in body.nodes if node.id == body.trainer_node_id), None)
+    if target is not None and target.data.get("executionBackend") == "ml_exp":
+        raise HTTPException(409, "This Trainer uses ML-Exp. Submit it through the ML-Exp panel.")
+
+
 @router.post("/train")
 def post_train(body: TrainRequest) -> StreamingResponse:
     """Streams NDJSON: progress, optional paused or aborted, then complete (or paused/aborted only)."""
+    _require_stream_backend(body)
     remote_cfg = get_effective_remote_train_config()
     prefers_remote = _trainer_prefers_remote_gpu(body)
     remote_enabled = remote_train_via_ssh_enabled(remote_cfg)
