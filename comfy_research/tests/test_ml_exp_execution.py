@@ -108,6 +108,16 @@ def test_source_mutation_refuses_continue_before_any_command(environment, monkey
     assert service.load(service.directory(JOB))["phase"] == "NEEDS_ATTENTION"
 
 
+def test_incomplete_source_after_crash_never_submits(environment, monkeypatch):
+    create()
+    (service.directory(JOB) / "source-hashes.json").unlink()
+    monkeypatch.setattr(
+        service, "cli", lambda *a, **kw: pytest.fail("incomplete source was submitted")
+    )
+    service.submit(JOB)
+    assert service.load(service.directory(JOB))["phase"] == "NEEDS_ATTENTION"
+
+
 def submitted():
     create()
     path = service.directory(JOB)
@@ -283,8 +293,16 @@ def test_cli_uses_argument_vector_and_does_not_leak_stderr(tmp_path):
     script.write_text("#!/bin/sh\nprintf secret-token >&2\nexit 2\n")
     script.chmod(0o700)
     with pytest.raises(service.JobError) as error:
-        service.cli({"binary": str(script), "config": ""}, ["check"])
+        service.cli(
+            {
+                "binary": str(script),
+                "config": "",
+                "diagnostic": str(tmp_path / "error.log"),
+            },
+            ["check"],
+        )
     assert "secret-token" not in str(error.value)
+    assert (tmp_path / "error.log").read_text() == "secret-token"
 
 
 def test_batch_runner_executes_real_cpu_graph_and_preserves_complete(environment):

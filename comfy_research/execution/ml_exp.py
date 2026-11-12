@@ -146,8 +146,16 @@ def freeze_connection(path: Path, cfg: dict) -> dict:
     raw = original.read_bytes()
     if len(raw) > 65536:
         raise JobError("ML-Exp client configuration is too large", 503)
-    value = json.loads(raw)
-    if not value.get("url") or not Path(value.get("token_file", "")).is_absolute():
+    try:
+        value = json.loads(raw)
+    except ValueError as exc:
+        raise JobError("ML-Exp client configuration is invalid JSON", 503) from exc
+    if (
+        not isinstance(value, dict)
+        or not isinstance(value.get("token_file"), str)
+        or not value.get("url")
+        or not Path(value["token_file"]).is_absolute()
+    ):
         raise JobError(
             "ML-Exp configuration needs a saved URL and an absolute token_file", 503
         )
@@ -155,7 +163,16 @@ def freeze_connection(path: Path, cfg: dict) -> dict:
     target = path / "client.json"
     target.write_bytes(raw)
     target.chmod(0o600)
-    return {**cfg, "config": str(target)}
+    return {**cfg, "config": str(target), "diagnostic": str(path / "cli-error.log")}
+
+
+def retain_cli_error(cfg: dict, stream) -> None:
+    if cfg.get("diagnostic"):
+        stream.seek(0)
+        path = Path(cfg["diagnostic"])
+        with open(path, "wb") as destination:
+            path.chmod(0o600)
+            destination.write(stream.read(8192))
 
 
 def cli(cfg: dict, args: list[str], *, timeout: int = 60) -> dict:
@@ -179,11 +196,13 @@ def cli(cfg: dict, args: list[str], *, timeout: int = 60) -> dict:
                 env=env,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
+            retain_cli_error(cfg, err)
             raise JobError(
                 "ML-Exp command did not finish; retain this job and refresh or continue it",
                 503,
             ) from exc
         if result.returncode:
+            retain_cli_error(cfg, err)
             raise JobError(
                 f"ML-Exp {args[0]} failed (exit {result.returncode}); check the server connection and job configuration",
                 502,
@@ -391,6 +410,11 @@ def submit(job_id: str) -> None:
                 )
             except JobError as exc:
                 job.update(phase="NEEDS_ATTENTION", error=str(exc))
+            except (OSError, ValueError, KeyError, TypeError):
+                job.update(
+                    phase="NEEDS_ATTENTION",
+                    error="Could not read the frozen source or submission response; retain this task's identity",
+                )
             save(path, job)
     except JobError:
         # Another worker owns the same job. Never submit a different identity.

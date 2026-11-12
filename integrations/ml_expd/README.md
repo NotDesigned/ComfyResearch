@@ -58,6 +58,8 @@ Job sources and private recovery records live under `.comfyresearch/ml-exp/`
 (override with `COMFYRESEARCH_ML_EXP_STATE_DIR`); retain this directory with the
 workspace to recover after a restart. Like the existing notebook and SSH
 execution APIs, these endpoints assume a trusted workbench deployment.
+Failed client commands retain bounded diagnostics in the job's private
+`cli-error.log`; their stderr is never returned to the browser.
 
 ## Use from the command line
 
