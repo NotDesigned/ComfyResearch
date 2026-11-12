@@ -18,6 +18,7 @@ from comfy_research.api import (
     graph_library,
     health,
     library_source,
+    ml_exp,
     kan_plot,
     notebook_execute,
     node_catalog,
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(user_linear_datasets.router)
     app.include_router(user_symbolic_func_datasets.router)
     app.include_router(train.router)
+    app.include_router(ml_exp.router)
     app.include_router(collect.router)
     app.include_router(parametric_path_sampler.router)
     app.include_router(activation_tensor.router)

@@ -1,5 +1,6 @@
 import type { ListOr1 } from "./multiValueUtils";
 import type { TrainSeriesAssignment } from "../../graph/trainSeriesPlan";
+import type { MlExpSettings } from "../../graph/mlExp";
 
 /** Ephemeral UI: canvas host (e.g. graph assist) streams NDJSON progress into the trainer node. */
 export type TrainerHostTrainUi = {
@@ -76,6 +77,12 @@ export type TrainerMinibatchSampling =
   | "affine_epoch";
 
 export type TrainerNodeData = {
+  executionBackend?: "direct" | "ml_exp";
+  mlExpSettings?: MlExpSettings;
+  mlExpJobId?: string;
+  mlExpGraphSignature?: string;
+  mlExpAppliedJobId?: string;
+  mlExpHistory?: { job_id: string; signature: string; applied: boolean }[];
   /** When `epochs`, `trainingSteps` is derived at train time from dataset size and batch. */
   trainingLengthMode?: TrainingLengthMode;
   /** Used when `trainingLengthMode` is `epochs`. */

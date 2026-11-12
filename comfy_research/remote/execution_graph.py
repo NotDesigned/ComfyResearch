@@ -7,6 +7,12 @@ from typing import Any
 
 _TRAINER_RUNTIME_KEYS = frozenset(
     {
+        "mlExpJobId",
+        "mlExpGraphSignature",
+        "mlExpAppliedJobId",
+        "mlExpSettings",
+        "mlExpHistory",
+        "trainCompleteCheckpoint",
         "hostTrainUi",
         "trainUi",
         "trainPauseCheckpoint",

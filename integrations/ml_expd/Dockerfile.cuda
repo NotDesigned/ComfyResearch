@@ -1,0 +1,5 @@
+# CUDA execution uses the same graph runner and a digest-pinned PyTorch runtime.
+FROM docker.io/pytorch/pytorch@sha256:c8268a92a69bd500f8be0e665b2630ee006dadaf7bfbc24249141b15ff622755
+ENV PIP_NO_CACHE_DIR=1 PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt

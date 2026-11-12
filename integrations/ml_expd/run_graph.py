@@ -18,9 +18,11 @@ Usage inside the job: ``python3 run_graph.py [request.json]``.
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -52,8 +54,9 @@ def scalars(name: str, value):
 
 
 class Translator:
-    def __init__(self, metrics) -> None:
+    def __init__(self, metrics, units: dict[str, str] | None = None) -> None:
         self.metrics = metrics
+        self.units = units or {}
         self.written: dict[str, int] = {}
         self.records = 0
 
@@ -64,7 +67,12 @@ class Translator:
         for i in range(self.written.get(name, 0), len(values)):
             step = steps[i] if aligned else i
             for key, number in scalars(name, values[i]):
-                record = {"name": key, "value": number, "step": int(step)}
+                # "value" is an explicit generic numeric coordinate, not a claim of
+                # physical dimensionlessness. Scientific units can be supplied by name.
+                unit = self.units.get(
+                    key, "loss" if key.startswith("loss/") else "value"
+                )
+                record = {"name": key, "value": number, "unit": unit, "step": int(step)}
                 self.metrics.write(json.dumps(record) + "\n")
                 self.records += 1
         self.written[name] = len(values)
@@ -81,21 +89,37 @@ class Translator:
 
 def main() -> int:
     request = CODE / (sys.argv[1] if len(sys.argv) > 1 else "request.json")
+    request_bytes = request.read_bytes()
+    request_hash = hashlib.sha256(request_bytes).hexdigest()
+    request_body = json.loads(request_bytes)
     output = Path(os.environ["OUTPUT_DIR"])
     # train_cli caches checkpoints under ./.comfyresearch; the code mount is read-only.
     work = output / "comfyresearch-work"
     work.mkdir(parents=True, exist_ok=True)
+    for relative, source in ((".comfyresearch/artifacts", CODE / "input-artifacts"),):
+        if source.is_dir():
+            shutil.copytree(source, work / relative, dirs_exist_ok=True)
+    effective_request = work / "request.json"
+    effective_request.write_text(
+        json.dumps(resolve_dataset_paths(request_body)), encoding="utf-8"
+    )
     env = dict(os.environ, PYTHONPATH=str(CODE), MPLBACKEND="Agg")
 
     last_metrics = None
+    complete = None
     terminal = None
-    with open(os.environ["METRICS_PATH"], "a") as metrics, \
-            open(output / "events.ndjson", "w") as events, \
-            open(request, "rb") as stdin:
-        translator = Translator(metrics)
+    with (
+        open(os.environ["METRICS_PATH"], "a") as metrics,
+        open(output / "events.ndjson", "w") as events,
+        open(effective_request, "rb") as stdin,
+    ):
+        translator = Translator(metrics, request_body.get("ml_exp_metric_units"))
         proc = subprocess.Popen(
             [sys.executable, "-u", "-m", "comfy_research.remote.train_cli"],
-            cwd=work, env=env, stdin=stdin, stdout=subprocess.PIPE,
+            cwd=work,
+            env=env,
+            stdin=stdin,
+            stdout=subprocess.PIPE,
         )
         assert proc.stdout is not None
         for raw in proc.stdout:
@@ -108,10 +132,14 @@ def main() -> int:
             if kind == "metrics":
                 translator.event(ev)
                 last_metrics = ev
-                print(f"step {ev.get('step')}: {translator.records} metric records", flush=True)
+                print(
+                    f"step {ev.get('step')}: {translator.records} metric records",
+                    flush=True,
+                )
             else:
                 if kind == "complete":
                     translator.event(ev)
+                    complete = ev
                 events.write(json.dumps(ev) + "\n")
                 events.flush()
                 print(f"event {kind}", flush=True)
@@ -121,10 +149,44 @@ def main() -> int:
 
     if last_metrics is not None:
         (output / "final_metrics.json").write_text(json.dumps(last_metrics))
-    print(f"train_cli exit {rc}, terminal event {terminal}, {translator.records} records", flush=True)
+    if complete is not None and rc == 0 and terminal == "complete":
+        (output / "comfyresearch-result.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "request_sha256": request_hash,
+                    "trainer_node_id": request_body["trainer_node_id"],
+                    "complete": complete,
+                }
+            ),
+            encoding="utf-8",
+        )
+    print(
+        f"train_cli exit {rc}, terminal event {terminal}, {translator.records} records",
+        flush=True,
+    )
     if rc != 0:
         return rc
     return 0 if terminal == "complete" else 1
+
+
+def resolve_dataset_paths(value):
+    """Explicit ml-exp-data://NAME/path references use verified mounted assets."""
+    if isinstance(value, str) and value.startswith("ml-exp-data://"):
+        name, _, relative = value[len("ml-exp-data://") :].partition("/")
+        datasets = json.loads(os.environ.get("DATASETS_JSON", "{}"))
+        if name not in datasets:
+            raise ValueError(f"Dataset binding {name} is not available")
+        root = Path(datasets[name]).resolve()
+        path = (root / relative).resolve()
+        if not path.is_relative_to(root):
+            raise ValueError("Dataset path escapes its mounted asset")
+        return str(path)
+    if isinstance(value, dict):
+        return {key: resolve_dataset_paths(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [resolve_dataset_paths(item) for item in value]
+    return value
 
 
 if __name__ == "__main__":

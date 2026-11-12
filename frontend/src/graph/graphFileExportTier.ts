@@ -8,6 +8,12 @@ function cloneGraphDocument(doc: GraphDocument): GraphDocument {
 }
 
 function stripCheckpointFields(data: Record<string, unknown>, nodeType: string): void {
+  if (nodeType === "trainer") {
+    delete data.mlExpJobId;
+    delete data.mlExpGraphSignature;
+    delete data.mlExpAppliedJobId;
+    delete data.mlExpHistory;
+  }
   if (nodeType === "model_checkpoint") {
     data.checkpoint_b64 = "";
     data.memoryCheckpoint_b64 = "";

@@ -36,6 +36,7 @@ import { ComfyFloatField, ComfyIntField } from "./comfyNumberFields";
 import { ComfyIntListField } from "./comfyMultiFields";
 import { intChoices, packIntList } from "./multiValueUtils";
 import { DiscreteMultiSelect } from "./DiscreteMultiSelect";
+import { MlExpTrainerPanel } from "./MlExpTrainerPanel";
 import {
   defaultTrainerData,
   type TrainerLogAggregation,
@@ -1632,7 +1633,7 @@ export function TrainerNode({ id, data, selected }: NodeProps) {
         ) : null}
         <div className="cr-node__header--row cr-node__header--trainer-main">
           <span className="cr-node__header-title nodrag nopan">Trainer</span>
-          {uiPaused ? (
+          {d.executionBackend === "ml_exp" ? <span className="cr-trainer-remote__hint">ML-Exp</span> : uiPaused ? (
             <div className="cr-trainer-train-btn-row nodrag nopan">
               <button
                 type="button"
@@ -1707,6 +1708,16 @@ export function TrainerNode({ id, data, selected }: NodeProps) {
         </div>
       </div>
       <div className="cr-node__body">
+        <label className="cr-comfy-widget nodrag nopan">
+          <span className="cr-comfy-widget__label">execution</span>
+          <select className="cr-input cr-comfy-widget__control nodrag nopan" aria-label="Trainer execution backend"
+            value={d.executionBackend ?? "direct"} disabled={uiLoading}
+            onChange={(event) => update({ executionBackend: event.target.value as "direct" | "ml_exp" })}>
+            <option value="direct">Local / SSH</option>
+            <option value="ml_exp">ML-Exp</option>
+          </select>
+        </label>
+        {d.executionBackend === "ml_exp" ? <MlExpTrainerPanel id={id} data={d} update={update} /> : null}
         <div className="cr-trainer-io" aria-label="Trainer inputs and outputs">
           <div className="cr-trainer-io-row">
             <TrainerInWrap handleId="dataset" label="dataset" fullWidth />
@@ -1789,6 +1800,7 @@ export function TrainerNode({ id, data, selected }: NodeProps) {
           ariaLabel="Training batch size (-1 for full batch)"
         />
 
+        <div hidden={d.executionBackend === "ml_exp"}>
         <DiscreteMultiSelect<ComputeModeUi>
           label="compute device"
           options={COMPUTE_MODE_OPTIONS}
@@ -1948,6 +1960,7 @@ export function TrainerNode({ id, data, selected }: NodeProps) {
         </div>
         ) : null}
 
+        </div>
         <ComfyFloatField
           label="grad clip max norm"
           value={d.gradClipMaxNorm}

@@ -386,6 +386,11 @@ type ExecutionGraphEdge = Pick<
 >;
 
 const TRAINER_RUNTIME_DATA_KEYS = new Set([
+  "mlExpJobId",
+  "mlExpGraphSignature",
+  "mlExpAppliedJobId",
+  "mlExpSettings",
+  "mlExpHistory",
   "hostTrainUi",
   "trainUi",
   "trainPauseCheckpoint",

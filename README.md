@@ -24,6 +24,8 @@
 
 ComfyResearch is a local visual workbench for AI and machine-learning research. Connect a dataset, model, loss, optimizer, and Trainer; attach Observables to measure learning dynamics; then run the graph through a FastAPI and PyTorch backend.
 
+For independently running PAI or Slurm jobs, choose **ML-Exp** in the Trainer's execution selector. See the [ML-Exp backend setup and supported workflows](integrations/ml_expd/README.md).
+
 Read [ComfyResearch: See How Learning Happens](https://meta-circle.com/blog/comfyresearch-see-how-learning-happens) for a visual introduction to the workbench and the learning dynamics it is designed to reveal.
 
 <p>
