@@ -5,6 +5,9 @@ PAI DLC and Slurm, keeps each Run's code, environment and data identities, and
 publishes metrics to W&B and MLflow. This directory runs a saved ComfyResearch
 graph there as a batch job instead of over a live SSH session.
 
+For repository ownership, cross-repository issues, and integration acceptance,
+see the [ComfyResearch and ML-Expd collaboration agreement](COLLABORATION.md).
+
 ## Use from the workbench
 
 Install the native `ml-exp` client (0.13.4 or newer) on the machine running the
